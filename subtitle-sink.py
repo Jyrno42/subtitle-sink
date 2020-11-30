@@ -1,10 +1,12 @@
 import configparser
+import logging
 import os
 import shutil
 import sys
 from dataclasses import dataclass
+from logging.config import dictConfig
 from time import sleep
-from typing import List
+from typing import List, Optional
 
 from guessit import guessit
 from watchdog.events import PatternMatchingEventHandler
@@ -16,6 +18,7 @@ class Config:
     SourceDir: str
     TVDirs: List[str]
     SeasonFormat: str
+    LogFile: Optional[str]
 
 
 def load_config(cfg_file):
@@ -42,23 +45,26 @@ def load_config(cfg_file):
 
     for tv_dir in tv_dirs:
         if not os.path.exists(tv_dir):
-            print(f"TV Dir {tv_dir} does not exist. Ignoring")
+            logging.error(f"TV Dir {tv_dir} does not exist. Ignoring")
             continue
 
         valid_tv_dirs.append(tv_dir)
 
     return Config(
-        SourceDir=source_dir, TVDirs=valid_tv_dirs, SeasonFormat=season_format
+        SourceDir=source_dir,
+        TVDirs=valid_tv_dirs,
+        SeasonFormat=season_format,
+        LogFile=cfg.get("Default", "LogFile", fallback=""),
     )
 
 
 def detect_tv_episode_info(path: str):
-    print(f"Got subtitle file {path}")
+    logging.info(f"Got subtitle file {path}")
 
     match = guessit(path)
 
     if match["type"] != "episode":
-        print(f"\tTv show not detected. Skipping file {path}")
+        logging.warning(f"Tv show not detected. Skipping file {path}")
         return
 
     title = match["title"]
@@ -86,14 +92,13 @@ def find_show_directory(cfg: Config, title: str, season: int):
         return matches[0]
 
     if len(matches) > 1:
-        print(f"\tFound multiple possible target dirs for show {title}:")
-        for mat in matches:
-            print(f"\t\t{mat}")
-        print("\tIgnoring subtitle")
+        logging.warning(
+            f"Ignoring subtitle. Found multiple possible target dirs for show {title}: {', '.join(matches)}"
+        )
         return None
 
     if len(matches) == 0:
-        print(f"\tTarget directory for show {title} not found. Ignoring subtitle")
+        logging.error(f"Target directory for show {title} not found. Ignoring subtitle")
         return None
 
 
@@ -131,8 +136,8 @@ def process_subtitle_file(subtitle_path: str, cfg: Config):
         )
 
         if not os.path.exists(season_directory) or not os.path.isdir(season_directory):
-            print(
-                f"\tDirectory for Season {season} does not exist (path tried: {season_directory})"
+            logging.error(
+                f"Directory for Season {season} does not exist (path tried: {season_directory})"
             )
             return
 
@@ -144,8 +149,9 @@ def process_subtitle_file(subtitle_path: str, cfg: Config):
 
         target_path = os.path.join(season_directory, subtitle_filename)
 
-        print(f"\tWill create subtitle file {subtitle_filename} [{confidence} match]")
-        print(f"\t\tTarget: {target_path}")
+        logging.info(
+            f"Will create subtitle file {subtitle_filename} [{confidence} match]. Target: {target_path}"
+        )
 
         # Copy the subtitle file to target dir
         shutil.copy(subtitle_path, target_path)
@@ -153,7 +159,7 @@ def process_subtitle_file(subtitle_path: str, cfg: Config):
         # Unlink the original file so it won't be processed again
         os.unlink(subtitle_path)
 
-        print("\t\tFile removed from sink")
+        logging.info(f"File {subtitle_filename} removed from sink")
 
 
 def is_subtitle_file(file_path):
@@ -200,11 +206,37 @@ def full_process(cfg):
 
 
 def main(cfg_file_path: str):
+    logging_cfg = dict(
+        version=1,
+        formatters={"f": {"format": "%(asctime)s [%(levelname)s] %(message)s"}},
+        handlers={
+            "default": {
+                "class": "logging.StreamHandler",
+                "formatter": "f",
+                "level": logging.INFO,
+            }
+        },
+        root={
+            "handlers": ["default"],
+            "level": logging.INFO,
+        },
+    )
+
+    # Set up logging
+    dictConfig(logging_cfg)
+
     with open(cfg_file_path) as h:
         cfg = load_config(h)
 
+    # Update logging config if filename is specified
+    if cfg.LogFile:
+        logging_cfg["handlers"]["default"]["class"] = "logging.FileHandler"
+        logging_cfg["handlers"]["default"]["filename"] = cfg.LogFile
+
+        dictConfig(logging_cfg)
+
     if not os.path.exists(cfg.SourceDir) or not os.path.isdir(cfg.SourceDir):
-        print(f"Source path {cfg.SourceDir} does not exist")
+        logging.error(f"Source path {cfg.SourceDir} does not exist")
         return 1
 
     full_process(cfg)
