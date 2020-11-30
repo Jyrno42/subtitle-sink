@@ -174,6 +174,11 @@ class SubtitleFileEventHandler(PatternMatchingEventHandler):
         if event.event_type != "modified" and event.event_type != "created":
             return
 
+        if not os.path.exists(event.src_path):
+            # Skip the event since the file does not exist. This usually occurs when we process a subtitle file
+            #  and then remove it ourselves. Having the check here avoids attempts to reimport it after the deletion.
+            return
+
         if is_subtitle_file(event.src_path):
             process_subtitle_file(event.src_path, self.cfg)
 
@@ -184,6 +189,16 @@ class SubtitleFileEventHandler(PatternMatchingEventHandler):
         self.process(event)
 
 
+def full_process(cfg):
+    for path in os.listdir(cfg.SourceDir):
+        full_path = os.path.join(cfg.SourceDir, path)
+
+        if not is_subtitle_file(full_path):
+            continue
+
+        process_subtitle_file(full_path, cfg)
+
+
 def main(cfg_file_path: str):
     with open(cfg_file_path) as h:
         cfg = load_config(h)
@@ -191,6 +206,8 @@ def main(cfg_file_path: str):
     if not os.path.exists(cfg.SourceDir) or not os.path.isdir(cfg.SourceDir):
         print(f"Source path {cfg.SourceDir} does not exist")
         return 1
+
+    full_process(cfg)
 
     observer = Observer()
     observer.schedule(SubtitleFileEventHandler(cfg), cfg.SourceDir, recursive=True)
