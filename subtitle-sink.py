@@ -159,7 +159,7 @@ def process_subtitle_file(subtitle_path: str, cfg: Config):
         # Unlink the original file so it won't be processed again
         os.unlink(subtitle_path)
 
-        logging.info(f"File {subtitle_filename} removed from sink")
+        logging.info(f"File {subtitle_path} removed from sink")
 
 
 def is_subtitle_file(file_path):
