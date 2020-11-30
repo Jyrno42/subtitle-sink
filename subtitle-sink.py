@@ -1,11 +1,14 @@
 import configparser
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from time import sleep
 from typing import List
 
 from guessit import guessit
+from watchdog.events import PatternMatchingEventHandler
+from watchdog.observers import Observer
 
 
 @dataclass
@@ -150,24 +153,56 @@ def process_subtitle_file(subtitle_path: str, cfg: Config):
         # Unlink the original file so it won't be processed again
         os.unlink(subtitle_path)
 
+        print("\t\tFile removed from sink")
+
+
+def is_subtitle_file(file_path):
+    return (
+        file_path.endswith(".srt")
+        or file_path.endswith(".sbv")
+        or file_path.endswith(".sub")
+    )
+
+
+class SubtitleFileEventHandler(PatternMatchingEventHandler):
+    def __init__(self, cfg: Config, *args, **kwargs):
+        self.cfg = cfg
+
+        super().__init__(*args, **kwargs)
+
+    def process(self, event):
+        if event.event_type != "modified" and event.event_type != "created":
+            return
+
+        if is_subtitle_file(event.src_path):
+            process_subtitle_file(event.src_path, self.cfg)
+
+    def on_modified(self, event):
+        self.process(event)
+
+    def on_created(self, event):
+        self.process(event)
+
 
 def main(cfg_file_path: str):
     with open(cfg_file_path) as h:
         cfg = load_config(h)
 
-    # TODO: Replace with a watchdog pattern
-    while True:
-        for path in os.listdir(cfg.SourceDir):
-            if (
-                not path.endswith(".srt")
-                and not path.endswith(".sbv")
-                and not path.endswith(".sub")
-            ):
-                continue
+    if not os.path.exists(cfg.SourceDir) or not os.path.isdir(cfg.SourceDir):
+        print(f"Source path {cfg.SourceDir} does not exist")
+        return 1
 
-            process_subtitle_file(os.path.join(cfg.SourceDir, path), cfg)
+    observer = Observer()
+    observer.schedule(SubtitleFileEventHandler(cfg), cfg.SourceDir, recursive=True)
+    observer.start()
 
-        sleep(60)
+    try:
+        while True:
+            sleep(1)
+    finally:
+        observer.stop()
+        observer.join()
+        return 0
 
 
 if __name__ == "__main__":
@@ -176,4 +211,4 @@ if __name__ == "__main__":
     if not os.path.exists(CFG_PATH):
         CFG_PATH = os.path.join(os.path.dirname(__file__), "config.cfg")
 
-    main(CFG_PATH)
+    sys.exit(main(CFG_PATH))
